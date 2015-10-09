@@ -59,10 +59,12 @@ import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.metadata.AliasAction;
+import org.elasticsearch.cluster.metadata.AliasMetaData;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.collect.Maps;
+import org.elasticsearch.common.hppc.cursors.ObjectCursor;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.query.FilterBuilder;
@@ -1033,6 +1035,23 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 				.routingTable(true).nodes(true).indices(indexName);
 		Iterator<String> iterator = client.admin().cluster().state(clusterStateRequest).actionGet().getState().getMetaData().aliases().keysIt();
 		return newHashSet(iterator);
+	}
+
+	@Override
+	public Set<String> queryByAlias(String aliasName) {
+		ClusterStateRequest clusterStateRequest = Requests.clusterStateRequest()
+				.routingTable(true).nodes(true).indices(aliasName);
+		Iterator<ImmutableOpenMap<String,AliasMetaData>> iterator = client.admin().cluster().state(clusterStateRequest).actionGet().getState().getMetaData().aliases().valuesIt();
+
+		Set<String> keys = newHashSet();
+		while(iterator.hasNext()) {
+			ImmutableOpenMap<String,AliasMetaData> entry = iterator.next();
+			for (ObjectCursor<String> stringObjectCursor : entry.keys()) {
+				keys.add(stringObjectCursor.value);
+			}
+		}
+
+		return keys;
 	}
 
 	private ElasticsearchPersistentEntity getPersistentEntityFor(Class clazz) {
