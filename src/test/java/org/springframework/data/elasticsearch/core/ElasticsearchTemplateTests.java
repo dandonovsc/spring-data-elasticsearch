@@ -49,6 +49,7 @@ import org.springframework.data.elasticsearch.ElasticsearchException;
 import org.springframework.data.elasticsearch.annotations.Document;
 import org.springframework.data.elasticsearch.core.query.*;
 import org.springframework.data.elasticsearch.entities.*;
+import org.springframework.data.elasticsearch.repositories.existing.index.CreateIndexFalseEntity;
 import org.springframework.data.util.CloseableIterator;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
@@ -59,6 +60,7 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
  * @author Franck Marchand
  * @author Abdul Mohammed
  * @author Kevin Leturc
+ * @author Mason Chan
  */
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:elasticsearch-template-test.xml")
@@ -464,6 +466,36 @@ public class ElasticsearchTemplateTests {
 		// then
 		assertThat(sampleEntities.getTotalElements(), equalTo(1L));
 	}
+
+    @Test
+    public void shouldUseScriptedFields() {
+        // given
+        String documentId = randomNumeric(5);
+        SampleEntity sampleEntity = new SampleEntity();
+        sampleEntity.setId(documentId);
+        sampleEntity.setRate(2);
+        sampleEntity.setMessage("some message");
+        sampleEntity.setVersion(System.currentTimeMillis());
+
+        IndexQuery indexQuery = new IndexQuery();
+        indexQuery.setId(documentId);
+        indexQuery.setObject(sampleEntity);
+
+        elasticsearchTemplate.index(indexQuery);
+        elasticsearchTemplate.refresh(SampleEntity.class, true);
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("factor", 2);
+        // when
+        SearchQuery searchQuery = new NativeSearchQueryBuilder()
+                .withQuery(matchAllQuery())
+                .withScriptField(new ScriptField("scriptedRate", "doc['rate'].value * factor", params))
+                .build();
+        Page<SampleEntity> sampleEntities = elasticsearchTemplate.queryForPage(searchQuery, SampleEntity.class);
+        // then
+        assertThat(sampleEntities.getTotalElements(), equalTo(1L));
+        assertThat(sampleEntities.getContent().get(0).getScriptedRate(), equalTo(4L));
+    }
 
 	@Test
 	public void shouldReturnPageableResultsGivenStringQuery() {
@@ -891,6 +923,64 @@ public class ElasticsearchTemplateTests {
 				}
 			});
 			if (page != null) {
+				sampleEntities.addAll(page.getContent());
+			} else {
+				hasRecords = false;
+			}
+		}
+		assertThat(sampleEntities.size(), is(equalTo(30)));
+	}
+
+	/*
+	DATAES-217
+	 */
+	@Test
+	public void shouldReturnResultsWithScanAndScrollForGivenCriteriaQueryAndClass() {
+		//given
+		List<IndexQuery> entities = createSampleEntitiesWithMessage("Test message", 30);
+		// when
+		elasticsearchTemplate.bulkIndex(entities);
+		elasticsearchTemplate.refresh(SampleEntity.class, true);
+		// then
+
+		CriteriaQuery criteriaQuery = new CriteriaQuery(new Criteria());
+		criteriaQuery.setPageable(new PageRequest(0, 10));
+
+		String scrollId = elasticsearchTemplate.scan(criteriaQuery, 1000, false, SampleEntity.class);
+		List<SampleEntity> sampleEntities = new ArrayList<SampleEntity>();
+		boolean hasRecords = true;
+		while (hasRecords) {
+			Page<SampleEntity> page = elasticsearchTemplate.scroll(scrollId, 5000L, SampleEntity.class);
+			if (page.hasContent()) {
+				sampleEntities.addAll(page.getContent());
+			} else {
+				hasRecords = false;
+			}
+		}
+		assertThat(sampleEntities.size(), is(equalTo(30)));
+	}
+
+	/*
+	DATAES-217
+	 */
+	@Test
+	public void shouldReturnResultsWithScanAndScrollForGivenSearchQueryAndClass() {
+		//given
+		List<IndexQuery> entities = createSampleEntitiesWithMessage("Test message", 30);
+		// when
+		elasticsearchTemplate.bulkIndex(entities);
+		elasticsearchTemplate.refresh(SampleEntity.class, true);
+		// then
+
+		SearchQuery searchQuery = new NativeSearchQueryBuilder().withQuery(matchAllQuery())
+				.withPageable(new PageRequest(0, 10)).build();
+
+		String scrollId = elasticsearchTemplate.scan(searchQuery, 1000, false, SampleEntity.class);
+		List<SampleEntity> sampleEntities = new ArrayList<SampleEntity>();
+		boolean hasRecords = true;
+		while (hasRecords) {
+			Page<SampleEntity> page = elasticsearchTemplate.scroll(scrollId, 5000L, SampleEntity.class);
+			if (page.hasContent()) {
 				sampleEntities.addAll(page.getContent());
 			} else {
 				hasRecords = false;

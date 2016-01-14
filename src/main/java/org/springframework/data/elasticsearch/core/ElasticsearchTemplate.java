@@ -108,6 +108,7 @@ import static org.springframework.data.elasticsearch.core.MappingBuilder.buildMa
  * @author Mohsin Husen
  * @author Artur Konczak
  * @author Kevin Leturc
+ * @author Mason Chan
  */
 
 public class ElasticsearchTemplate implements ElasticsearchOperations, ApplicationContextAware {
@@ -119,26 +120,34 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 	private String searchTimeout;
 
 	public ElasticsearchTemplate(Client client) {
-		this(client, null, null);
+		this(client, new MappingElasticsearchConverter(new SimpleElasticsearchMappingContext()));
 	}
 
 	public ElasticsearchTemplate(Client client, EntityMapper entityMapper) {
-		this(client, null, new DefaultResultMapper(entityMapper));
+		this(client, new MappingElasticsearchConverter(new SimpleElasticsearchMappingContext()), entityMapper);
+	}
+
+	public ElasticsearchTemplate(Client client, ElasticsearchConverter elasticsearchConverter, EntityMapper entityMapper) {
+		this(client, elasticsearchConverter, new DefaultResultMapper(elasticsearchConverter.getMappingContext(), entityMapper));
 	}
 
 	public ElasticsearchTemplate(Client client, ResultsMapper resultsMapper) {
-		this(client, null, resultsMapper);
+		this(client, new MappingElasticsearchConverter(new SimpleElasticsearchMappingContext()), resultsMapper);
 	}
 
 	public ElasticsearchTemplate(Client client, ElasticsearchConverter elasticsearchConverter) {
-		this(client, elasticsearchConverter, null);
+		this(client, elasticsearchConverter, new DefaultResultMapper(elasticsearchConverter.getMappingContext()));
 	}
 
 	public ElasticsearchTemplate(Client client, ElasticsearchConverter elasticsearchConverter, ResultsMapper resultsMapper) {
+
+		Assert.notNull(client, "Client must not be null!");
+		Assert.notNull(elasticsearchConverter, "ElasticsearchConverter must not be null!");
+		Assert.notNull(resultsMapper, "ResultsMapper must not be null!");
+
 		this.client = client;
-		this.elasticsearchConverter = (elasticsearchConverter == null) ? new MappingElasticsearchConverter(
-				new SimpleElasticsearchMappingContext()) : elasticsearchConverter;
-		this.resultsMapper = (resultsMapper == null) ? new DefaultResultMapper(this.elasticsearchConverter.getMappingContext()) : resultsMapper;
+		this.elasticsearchConverter = elasticsearchConverter;
+		this.resultsMapper = resultsMapper;
 	}
 
 	public void setSearchTimeout(String searchTimeout) {
@@ -346,8 +355,7 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 	@Override
 	public <T> CloseableIterator<T> stream(CriteriaQuery query, Class<T> clazz) {
 		final long scrollTimeInMillis = TimeValue.timeValueMinutes(1).millis();
-		setPersistentEntityIndexAndType(query, clazz);
-		final String initScrollId = scan(query, scrollTimeInMillis, false);
+		final String initScrollId = scan(query, scrollTimeInMillis, false, clazz);
 		return doStream(initScrollId, scrollTimeInMillis, clazz, resultsMapper);
 	}
 
@@ -359,8 +367,7 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 	@Override
 	public <T> CloseableIterator<T> stream(SearchQuery query, final Class<T> clazz, final SearchResultMapper mapper) {
 		final long scrollTimeInMillis = TimeValue.timeValueMinutes(1).millis();
-		setPersistentEntityIndexAndType(query, clazz);
-		final String initScrollId = scan(query, scrollTimeInMillis, false);
+		final String initScrollId = scan(query, scrollTimeInMillis, false, clazz);
 		return doStream(initScrollId, scrollTimeInMillis, clazz, mapper);
 	}
 
@@ -684,40 +691,27 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 
 	@Override
 	public String scan(CriteriaQuery criteriaQuery, long scrollTimeInMillis, boolean noFields) {
-		Assert.notNull(criteriaQuery.getIndices(), "No index defined for Query");
-		Assert.notNull(criteriaQuery.getTypes(), "No type define for Query");
-		Assert.notNull(criteriaQuery.getPageable(), "Query.pageable is required for scan & scroll");
+		return doScan(prepareScan(criteriaQuery, scrollTimeInMillis, noFields), criteriaQuery);
+	}
 
-		QueryBuilder elasticsearchQuery = new CriteriaQueryProcessor().createQueryFromCriteria(criteriaQuery.getCriteria());
-		FilterBuilder elasticsearchFilter = new CriteriaFilterProcessor().createFilterFromCriteria(criteriaQuery.getCriteria());
-		SearchRequestBuilder requestBuilder = prepareScan(criteriaQuery, scrollTimeInMillis, noFields);
-
-		if (elasticsearchQuery != null) {
-			requestBuilder.setQuery(elasticsearchQuery);
-		} else {
-			requestBuilder.setQuery(QueryBuilders.matchAllQuery());
-		}
-
-		if (elasticsearchFilter != null) {
-			requestBuilder.setPostFilter(elasticsearchFilter);
-		}
-
-		return getSearchResponse(requestBuilder.execute()).getScrollId();
+	@Override
+	public <T> String scan(CriteriaQuery criteriaQuery, long scrollTimeInMillis, boolean noFields, Class<T> clazz) {
+		return doScan(prepareScan(criteriaQuery, scrollTimeInMillis, noFields, clazz), criteriaQuery);
 	}
 
 	@Override
 	public String scan(SearchQuery searchQuery, long scrollTimeInMillis, boolean noFields) {
-		Assert.notNull(searchQuery.getIndices(), "No index defined for Query");
-		Assert.notNull(searchQuery.getTypes(), "No type define for Query");
-		Assert.notNull(searchQuery.getPageable(), "Query.pageable is required for scan & scroll");
+		return doScan(prepareScan(searchQuery, scrollTimeInMillis, noFields), searchQuery);
+	}
 
-		SearchRequestBuilder requestBuilder = prepareScan(searchQuery, scrollTimeInMillis, noFields);
+	@Override
+	public <T> String scan(SearchQuery searchQuery, long scrollTimeInMillis, boolean noFields, Class<T> clazz) {
+		return doScan(prepareScan(searchQuery, scrollTimeInMillis, noFields, clazz), searchQuery);
+	}
 
-		if (searchQuery.getFilter() != null) {
-			requestBuilder.setPostFilter(searchQuery.getFilter());
-		}
-
-		return getSearchResponse(requestBuilder.setQuery(searchQuery.getQuery()).execute()).getScrollId();
+	private <T> SearchRequestBuilder prepareScan(Query query, long scrollTimeInMillis, boolean noFields, Class<T> clazz) {
+		setPersistentEntityIndexAndType(query, clazz);
+		return prepareScan(query, scrollTimeInMillis, noFields);
 	}
 
 	private SearchRequestBuilder prepareScan(Query query, long scrollTimeInMillis, boolean noFields) {
@@ -734,6 +728,39 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 			requestBuilder.setNoFields();
 		}
 		return requestBuilder;
+	}
+
+	private String doScan(SearchRequestBuilder requestBuilder, CriteriaQuery criteriaQuery) {
+		Assert.notNull(criteriaQuery.getIndices(), "No index defined for Query");
+		Assert.notNull(criteriaQuery.getTypes(), "No type define for Query");
+		Assert.notNull(criteriaQuery.getPageable(), "Query.pageable is required for scan & scroll");
+
+		QueryBuilder elasticsearchQuery = new CriteriaQueryProcessor().createQueryFromCriteria(criteriaQuery.getCriteria());
+		FilterBuilder elasticsearchFilter = new CriteriaFilterProcessor().createFilterFromCriteria(criteriaQuery.getCriteria());
+
+		if (elasticsearchQuery != null) {
+			requestBuilder.setQuery(elasticsearchQuery);
+		} else {
+			requestBuilder.setQuery(QueryBuilders.matchAllQuery());
+		}
+
+		if (elasticsearchFilter != null) {
+			requestBuilder.setPostFilter(elasticsearchFilter);
+		}
+
+		return getSearchResponse(requestBuilder.execute()).getScrollId();
+	}
+
+	private String doScan(SearchRequestBuilder requestBuilder, SearchQuery searchQuery) {
+		Assert.notNull(searchQuery.getIndices(), "No index defined for Query");
+		Assert.notNull(searchQuery.getTypes(), "No type define for Query");
+		Assert.notNull(searchQuery.getPageable(), "Query.pageable is required for scan & scroll");
+
+		if (searchQuery.getFilter() != null) {
+			requestBuilder.setPostFilter(searchQuery.getFilter());
+		}
+
+		return getSearchResponse(requestBuilder.setQuery(searchQuery.getQuery()).execute()).getScrollId();
 	}
 
 	@Override
@@ -821,6 +848,13 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 		if (CollectionUtils.isNotEmpty(searchQuery.getElasticsearchSorts())) {
 			for (SortBuilder sort : searchQuery.getElasticsearchSorts()) {
 				searchRequest.addSort(sort);
+			}
+		}
+
+		if (!searchQuery.getScriptFields().isEmpty()) {
+			searchRequest.addField("_source");
+			for (ScriptField scriptedField : searchQuery.getScriptFields()) {
+				searchRequest.addScriptField(scriptedField.fieldName(), scriptedField.script(), scriptedField.params());
 			}
 		}
 
@@ -1053,7 +1087,8 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 		return keys;
 	}
 
-	private ElasticsearchPersistentEntity getPersistentEntityFor(Class clazz) {
+	@Override
+	public ElasticsearchPersistentEntity getPersistentEntityFor(Class clazz) {
 		Assert.isTrue(clazz.isAnnotationPresent(Document.class), "Unable to identify index name. " + clazz.getSimpleName()
 				+ " is not a Document. Make sure the document class is annotated with @Document(indexName=\"foo\")");
 		return elasticsearchConverter.getMappingContext().getPersistentEntity(clazz);
