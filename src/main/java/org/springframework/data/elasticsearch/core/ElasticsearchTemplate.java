@@ -873,6 +873,12 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 				searchRequest.addHighlightedField(highlightField);
 			}
 		}
+		
+		if (CollectionUtils.isNotEmpty(searchQuery.getIndicesBoost())) {
+			for (IndexBoost indexBoost : searchQuery.getIndicesBoost()) {
+				searchRequest.addIndexBoost(indexBoost.getIndexName(), indexBoost.getBoost());
+			}
+		}
 
 		if (CollectionUtils.isNotEmpty(searchQuery.getAggregations())) {
 			for (AbstractAggregationBuilder aggregationBuilder : searchQuery.getAggregations()) {
@@ -1191,8 +1197,9 @@ public class ElasticsearchTemplate implements ElasticsearchOperations, Applicati
 			bufferedReader = new BufferedReader(inputStreamReader);
 			String line;
 
+			String lineSeparator = System.getProperty("line.separator");
 			while ((line = bufferedReader.readLine()) != null) {
-				stringBuilder.append(line);
+				stringBuilder.append(line).append(lineSeparator);
 			}
 		} catch (Exception e) {
 			logger.debug(String.format("Failed to load file from url: %s: %s", url, e.getMessage()));

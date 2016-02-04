@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,22 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.springframework.data.elasticsearch.annotations;
 
-import java.lang.annotation.*;
-import org.springframework.data.annotation.Persistent;
+package org.springframework.data.elasticsearch.core.query;
 
 /**
- * Elasticsearch Mapping
+ * Defines a IndexBoost to be applied on the "indices_boost" query clause
  *
- * @author Mohsin Husen
+ * @author Thiago Locatelli
  */
-@Persistent
-@Inherited
-@Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.TYPE, ElementType.FIELD})
-public @interface Mapping {
+public class IndexBoost {
 
-	String mappingPath() default "";
+	private String indexName;
+	private float boost;
+
+	public IndexBoost(String indexName, float boost) {
+		this.indexName = indexName;
+		this.boost = boost;
+	}
+
+	public String getIndexName() {
+		return indexName;
+	}
+
+	public float getBoost() {
+		return boost;
+	}
 
 }

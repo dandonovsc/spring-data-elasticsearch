@@ -2049,6 +2049,25 @@ public class ElasticsearchTemplateTests {
 	}
 
 
+	@Test
+	public void shouldReadFileFromClasspathRetainingNewlines() {
+		// given
+		String settingsFile = "/settings/test-settings.yml";
+
+		// when
+		String content = ElasticsearchTemplate.readFileFromClasspath(settingsFile);
+
+		// then
+		assertThat(content, is("index:\n" +
+				"  number_of_shards: 1\n" +
+				"  number_of_replicas: 0\n" +
+				"  analysis:\n" +
+				"    analyzer:\n" +
+				"      emailAnalyzer:\n" +
+				"        type: custom\n" +
+				"        tokenizer: uax_url_email\n"));
+	}
+
 	private IndexQuery getIndexQuery(SampleEntity sampleEntity) {
 		return new IndexQueryBuilder().withId(sampleEntity.getId()).withObject(sampleEntity).build();
 	}
